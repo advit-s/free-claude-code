@@ -381,6 +381,47 @@ def test_create_response_replays_prior_reasoning_as_reasoning_content() -> None:
     assert routed.messages[3].content == "continue"
 
 
+def test_create_response_replays_empty_reasoning_content() -> None:
+    provider = FakeProvider(_anthropic_text_stream("done"))
+    app = create_app(lifespan_enabled=False)
+    with (
+        patch("api.dependencies.resolve_provider", return_value=provider),
+        TestClient(app) as client,
+    ):
+        response = client.post(
+            "/v1/responses",
+            json={
+                "model": "nvidia_nim/test-model",
+                "input": [
+                    {
+                        "id": "rs_empty",
+                        "type": "reasoning",
+                        "summary": [],
+                        "content": [{"type": "reasoning_text", "text": ""}],
+                    },
+                    {
+                        "type": "function_call",
+                        "call_id": "call_1",
+                        "name": "echo",
+                        "arguments": "{}",
+                    },
+                    {
+                        "type": "function_call_output",
+                        "call_id": "call_1",
+                        "output": "ok",
+                    },
+                ],
+                "stream": True,
+            },
+        )
+
+    assert response.status_code == 200
+    routed = provider.requests[0]
+    assert routed.messages[0].role == "assistant"
+    assert routed.messages[0].content[0].type == "tool_use"
+    assert routed.messages[0].reasoning_content == ""
+
+
 @pytest.mark.parametrize(
     ("reasoning", "expected_type", "expected_enabled"),
     [

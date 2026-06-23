@@ -98,6 +98,10 @@ class OpenAIChatTransport(BaseProvider):
         """Return the body passed to the upstream OpenAI-compatible client."""
         return body
 
+    def _preserve_empty_reasoning_content(self, body: dict[str, Any]) -> bool:
+        """Whether empty reasoning_content is meaningful for this upstream request."""
+        return False
+
     def _record_tool_call_extra_content(
         self, tool_call_id: str, extra_content: dict[str, Any]
     ) -> None:

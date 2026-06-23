@@ -46,7 +46,7 @@ class OpenAIChatRecovery:
                     if delta is None:
                         continue
                     reasoning = getattr(delta, "reasoning_content", None)
-                    if isinstance(reasoning, str) and reasoning:
+                    if isinstance(reasoning, str):
                         thinking_parts.append(reasoning)
                     content = getattr(delta, "content", None)
                     if isinstance(content, str) and content:

@@ -29,3 +29,7 @@ class OpenCodeProvider(OpenAIChatTransport):
             request,
             thinking_enabled=self._is_thinking_enabled(request, thinking_enabled),
         )
+
+    def _preserve_empty_reasoning_content(self, body: dict[str, Any]) -> bool:
+        """DeepSeek V4 treats even empty reasoning_content as required replay state."""
+        return "deepseek" in str(body.get("model", "")).lower()

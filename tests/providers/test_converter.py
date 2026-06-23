@@ -266,6 +266,46 @@ def test_convert_assistant_top_level_reasoning_content_is_preserved():
     ]
 
 
+def test_convert_assistant_empty_reasoning_content_is_preserved():
+    messages = [
+        MockMessage(
+            "assistant",
+            "",
+            reasoning_content="",
+        )
+    ]
+    result = AnthropicToOpenAIConverter.convert_messages(
+        messages, reasoning_replay=ReasoningReplayMode.REASONING_CONTENT
+    )
+
+    assert result == [
+        {
+            "role": "assistant",
+            "content": "",
+            "reasoning_content": "",
+        }
+    ]
+
+
+def test_convert_assistant_tool_call_empty_reasoning_content_is_preserved():
+    content = [
+        MockBlock(
+            type="tool_use",
+            id="call_empty_reasoning",
+            name="search",
+            input={"query": "python"},
+        ),
+    ]
+    messages = [MockMessage("assistant", content, reasoning_content="")]
+    result = AnthropicToOpenAIConverter.convert_messages(
+        messages, reasoning_replay=ReasoningReplayMode.REASONING_CONTENT
+    )
+
+    assert result[0]["content"] == ""
+    assert result[0]["reasoning_content"] == ""
+    assert result[0]["tool_calls"][0]["id"] == "call_empty_reasoning"
+
+
 def test_convert_assistant_thinking_tool_use_replays_top_level_reasoning():
     content = [
         MockBlock(type="thinking", thinking="I should call the tool."),

@@ -83,6 +83,9 @@ class OpenAIChatStreamRunner:
         thinking_enabled = self._transport._is_thinking_enabled(
             self._request, self._thinking_enabled
         )
+        preserve_empty_reasoning = self._transport._preserve_empty_reasoning_content(
+            body
+        )
         trace_event(
             stage="provider",
             event="provider.request.sent",
@@ -128,11 +131,18 @@ class OpenAIChatStreamRunner:
                             logger.debug("{} finish_reason: {}", tag, finish_reason)
 
                         reasoning = getattr(delta, "reasoning_content", None)
-                        if thinking_enabled and reasoning:
+                        if (
+                            thinking_enabled
+                            and isinstance(reasoning, str)
+                            and (reasoning or preserve_empty_reasoning)
+                        ):
                             for event in hold_events(sse.ensure_thinking_block()):
                                 yield event
-                            for event in hold_event(sse.emit_thinking_delta(reasoning)):
-                                yield event
+                            if reasoning:
+                                for event in hold_event(
+                                    sse.emit_thinking_delta(reasoning)
+                                ):
+                                    yield event
 
                         for event in self._transport._handle_extra_reasoning(
                             delta,

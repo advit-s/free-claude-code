@@ -77,7 +77,9 @@ def _serialize_tool_result_content(tool_content: Any) -> str:
 def _clean_reasoning_content(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
-    return value if value else None
+    # DeepSeek V4 thinking mode requires reasoning_content to be replayed exactly.
+    # An empty string is still meaningful protocol state and must not be dropped.
+    return value
 
 
 def _think_tag_content(reasoning: str) -> str:
@@ -231,10 +233,13 @@ class AnthropicToOpenAIConverter:
                     pending.deferred_emitted = True
                     pending = None
                 converted = {"role": role, "content": content}
-                if role == "assistant" and reasoning_content:
+                if role == "assistant" and reasoning_content is not None:
                     if reasoning_replay == ReasoningReplayMode.REASONING_CONTENT:
                         converted["reasoning_content"] = reasoning_content
-                    elif reasoning_replay == ReasoningReplayMode.THINK_TAGS:
+                    elif (
+                        reasoning_replay == ReasoningReplayMode.THINK_TAGS
+                        and reasoning_content
+                    ):
                         content_parts = [_think_tag_content(reasoning_content)]
                         if content:
                             content_parts.append(content)
@@ -316,7 +321,7 @@ class AnthropicToOpenAIConverter:
             }
             if reasoning_replay == ReasoningReplayMode.REASONING_CONTENT:
                 replay = reasoning_content
-                if replay:
+                if replay is not None:
                     pre_msg["reasoning_content"] = replay
         else:
             pre_msg = AnthropicToOpenAIConverter._convert_assistant_message(
@@ -384,9 +389,10 @@ class AnthropicToOpenAIConverter:
         if tool_calls:
             msg["tool_calls"] = tool_calls
         if reasoning_replay == ReasoningReplayMode.REASONING_CONTENT:
-            replay_reasoning = reasoning_content or "\n".join(thinking_parts)
-            if replay_reasoning:
-                msg["reasoning_content"] = replay_reasoning
+            if reasoning_content is not None:
+                msg["reasoning_content"] = reasoning_content
+            elif thinking_parts:
+                msg["reasoning_content"] = "\n".join(thinking_parts)
 
         return [msg]
 

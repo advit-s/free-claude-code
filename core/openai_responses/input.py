@@ -126,7 +126,7 @@ def _append_input_item(
                 }
             ],
         }
-        if pending_reasoning:
+        if pending_reasoning is not None:
             message["reasoning_content"] = pending_reasoning
         messages.append(message)
         return None
@@ -177,7 +177,7 @@ def _append_message_item(
         "role": normalized_role,
         "content": _convert_message_content(content),
     }
-    if normalized_role == "assistant" and reasoning_content:
+    if normalized_role == "assistant" and reasoning_content is not None:
         message["reasoning_content"] = reasoning_content
     messages.append(message)
 
@@ -185,7 +185,7 @@ def _append_message_item(
 def _append_pending_reasoning(
     messages: list[dict[str, Any]], pending_reasoning: str | None
 ) -> None:
-    if pending_reasoning:
+    if pending_reasoning is not None:
         messages.append(
             {
                 "role": "assistant",
