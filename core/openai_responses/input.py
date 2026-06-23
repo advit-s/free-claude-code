@@ -239,18 +239,7 @@ def _last_message_is_tool_call_assistant(messages: list[dict[str, Any]]) -> bool
 def _last_message_is_tool_result_user(messages: list[dict[str, Any]]) -> bool:
     if not messages:
         return False
-    message = messages[-1]
-    if message.get("role") != "user":
-        return False
-    content = message.get("content")
-    return (
-        isinstance(content, list)
-        and bool(content)
-        and all(
-            isinstance(block, dict) and block.get("type") == "tool_result"
-            for block in content
-        )
-    )
+    return _is_tool_result_user_message(messages[-1])
 
 
 def _is_tool_call_assistant_message(message: Mapping[str, Any]) -> bool:
