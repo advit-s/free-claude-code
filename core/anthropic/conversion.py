@@ -124,6 +124,9 @@ class _PendingAfterTools:
     def needs_deferred(self) -> bool:
         return bool(self.deferred_blocks) and not self.deferred_emitted
 
+    def awaits_tool_results(self) -> bool:
+        return bool(self.remaining_tool_ids)
+
 
 def _index_first_tool_use(blocks: list[Any]) -> int | None:
     for i, block in enumerate(blocks):
@@ -247,7 +250,9 @@ class AnthropicToOpenAIConverter:
                 result.append(converted)
             elif isinstance(content, list):
                 if role == "user":
-                    if pending is not None and pending.needs_deferred():
+                    if pending is not None and (
+                        pending.needs_deferred() or pending.awaits_tool_results()
+                    ):
                         if not pending.remaining_tool_ids:
                             result.extend(
                                 AnthropicToOpenAIConverter._deferred_post_tool_to_messages(
@@ -332,13 +337,13 @@ class AnthropicToOpenAIConverter:
         pre_msg["tool_calls"] = tool_calls
         if tool_calls and pre_msg.get("content") == " ":
             pre_msg["content"] = ""
+        res_ids: set[str] = set()
+        for tc in tool_calls:
+            tid = tc.get("id")
+            if tid is not None and str(tid).strip() != "":
+                res_ids.add(str(tid))
         pnd: _PendingAfterTools | None = None
-        if deferred_blocks:
-            res_ids: set[str] = set()
-            for tc in tool_calls:
-                tid = tc.get("id")
-                if tid is not None and str(tid).strip() != "":
-                    res_ids.add(str(tid))
+        if res_ids or deferred_blocks:
             pnd = _PendingAfterTools(
                 remaining_tool_ids=res_ids,
                 deferred_blocks=deferred_blocks,
@@ -413,7 +418,7 @@ class AnthropicToOpenAIConverter:
         content: list[Any], pending: _PendingAfterTools
     ) -> dict[str, Any]:
         """Convert user list blocks, emitting deferred assistant after all tool results."""
-        if not pending.needs_deferred() or not pending.remaining_tool_ids:
+        if not pending.remaining_tool_ids:
             return {
                 "messages": AnthropicToOpenAIConverter._convert_user_message(content),
                 "cleared_pending": False,
@@ -439,7 +444,10 @@ class AnthropicToOpenAIConverter:
                     "extend the converter."
                 )
             elif block_type == "tool_result":
-                flush_text()
+                # When this user message answers a pending assistant tool_call,
+                # OpenAI chat requires the tool messages to appear immediately
+                # after that assistant message. Keep any surrounding user text
+                # buffered until after the required tool_result messages.
                 tool_content = get_block_attr(block, "content", "")
                 serialized = _serialize_tool_result_content(tool_content)
                 tuid = get_block_attr(block, "tool_use_id")
@@ -454,12 +462,13 @@ class AnthropicToOpenAIConverter:
                 if tuid_s in pending.remaining_tool_ids:
                     pending.remaining_tool_ids.discard(tuid_s)
                 if not pending.remaining_tool_ids:
-                    result.extend(
-                        AnthropicToOpenAIConverter._deferred_post_tool_to_messages(
-                            pending
+                    if pending.needs_deferred():
+                        result.extend(
+                            AnthropicToOpenAIConverter._deferred_post_tool_to_messages(
+                                pending
+                            )
                         )
-                    )
-                    pending.deferred_emitted = True
+                        pending.deferred_emitted = True
                     cleared = True
             else:
                 pass

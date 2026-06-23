@@ -378,6 +378,114 @@ def test_responses_prior_custom_tool_call_flattens_tool_use_name() -> None:
     ]
 
 
+def test_responses_reasoning_between_tool_call_and_output_attaches_to_tool_call() -> (
+    None
+):
+    payload = _ADAPTER.to_anthropic_payload(
+        {
+            "model": "opencode/deepseek-v4-flash-free",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "echo",
+                    "arguments": "{}",
+                },
+                {
+                    "type": "reasoning",
+                    "summary": [],
+                    "content": [{"type": "reasoning_text", "text": ""}],
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "ok",
+                },
+            ],
+        }
+    )
+
+    assert payload["messages"] == [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "echo",
+                    "input": {},
+                }
+            ],
+            "reasoning_content": "",
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "call_1", "content": "ok"}
+            ],
+        },
+    ]
+
+
+def test_responses_consecutive_function_calls_are_grouped_for_openai_chat() -> None:
+    payload = _ADAPTER.to_anthropic_payload(
+        {
+            "model": "opencode/deepseek-v4-flash-free",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "read_file",
+                    "arguments": "{}",
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_2",
+                    "name": "git_status",
+                    "arguments": "{}",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "file",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_2",
+                    "output": "clean",
+                },
+            ],
+        }
+    )
+
+    assert payload["messages"] == [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "read_file",
+                    "input": {},
+                },
+                {
+                    "type": "tool_use",
+                    "id": "call_2",
+                    "name": "git_status",
+                    "input": {},
+                },
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "call_1", "content": "file"},
+                {"type": "tool_result", "tool_use_id": "call_2", "content": "clean"},
+            ],
+        },
+    ]
+
+
 def test_responses_unsupported_tool_type_is_clear() -> None:
     with pytest.raises(_CONVERSION_ERROR, match="Unsupported Responses tool type"):
         _ADAPTER.to_anthropic_payload(

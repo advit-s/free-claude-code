@@ -106,44 +106,19 @@ def _append_input_item(
         _append_message_item(role, item.get("content", ""), messages, system_parts)
         return None
     if item_type in {"function_call", "custom_tool_call"}:
-        namespace = optional_str(item.get("namespace"))
-        field_name = f"{item_type}.name"
-        name = required_str(item.get("name"), field_name)
-        if item_type == "custom_tool_call":
-            tool_input = custom_tool_input_to_anthropic(item.get("input"))
-        else:
-            tool_input = parse_arguments(item.get("arguments"))
-        message = {
-            "role": "assistant",
-            "content": [
-                {
-                    "type": "tool_use",
-                    "id": call_id_from_item(item),
-                    "name": responses_tool_name_to_anthropic_name(
-                        name, namespace=namespace
-                    ),
-                    "input": tool_input,
-                }
-            ],
-        }
-        if pending_reasoning is not None:
-            message["reasoning_content"] = pending_reasoning
-        messages.append(message)
+        _append_tool_call_item(item, item_type, messages, pending_reasoning)
         return None
     if item_type in {"function_call_output", "custom_tool_call_output"}:
-        _append_pending_reasoning(messages, pending_reasoning)
-        messages.append(
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": call_id_from_item(item),
-                        "content": item.get("output", ""),
-                    }
-                ],
-            }
-        )
+        # Responses histories can contain a reasoning item after a function_call item
+        # but before the matching function_call_output. OpenAI chat requires
+        # assistant tool_calls to be followed immediately by tool messages, so that
+        # reasoning must be attached to the preceding assistant tool-call message
+        # instead of becoming a separate assistant turn before the tool result.
+        if pending_reasoning is not None and not _attach_reasoning_to_open_tool_call(
+            messages, pending_reasoning
+        ):
+            _append_pending_reasoning(messages, pending_reasoning)
+        _append_tool_result_item(item, messages)
         return None
     if item_type == "reasoning":
         return combine_reasoning(pending_reasoning, reasoning_text_from_item(item))
@@ -185,14 +160,148 @@ def _append_message_item(
 def _append_pending_reasoning(
     messages: list[dict[str, Any]], pending_reasoning: str | None
 ) -> None:
+    if pending_reasoning is None:
+        return
+    if _last_message_is_tool_call_assistant(messages):
+        _attach_reasoning_to_open_tool_call(messages, pending_reasoning)
+        return
+    messages.append(
+        {
+            "role": "assistant",
+            "content": "",
+            "reasoning_content": pending_reasoning,
+        }
+    )
+
+
+def _append_tool_call_item(
+    item: Mapping[str, Any],
+    item_type: str,
+    messages: list[dict[str, Any]],
+    pending_reasoning: str | None,
+) -> None:
+    tool_use = _tool_use_block_from_call_item(item, item_type)
+    if _last_message_is_tool_call_assistant(messages):
+        content = messages[-1]["content"]
+        if isinstance(content, list):
+            content.append(tool_use)
+        if pending_reasoning is not None:
+            _merge_reasoning_into_message(messages[-1], pending_reasoning)
+        return
+
+    message: dict[str, Any] = {"role": "assistant", "content": [tool_use]}
     if pending_reasoning is not None:
-        messages.append(
-            {
-                "role": "assistant",
-                "content": "",
-                "reasoning_content": pending_reasoning,
-            }
+        message["reasoning_content"] = pending_reasoning
+    messages.append(message)
+
+
+def _tool_use_block_from_call_item(
+    item: Mapping[str, Any], item_type: str
+) -> dict[str, Any]:
+    namespace = optional_str(item.get("namespace"))
+    field_name = f"{item_type}.name"
+    name = required_str(item.get("name"), field_name)
+    if item_type == "custom_tool_call":
+        tool_input = custom_tool_input_to_anthropic(item.get("input"))
+    else:
+        tool_input = parse_arguments(item.get("arguments"))
+    return {
+        "type": "tool_use",
+        "id": call_id_from_item(item),
+        "name": responses_tool_name_to_anthropic_name(name, namespace=namespace),
+        "input": tool_input,
+    }
+
+
+def _append_tool_result_item(
+    item: Mapping[str, Any], messages: list[dict[str, Any]]
+) -> None:
+    tool_result = {
+        "type": "tool_result",
+        "tool_use_id": call_id_from_item(item),
+        "content": item.get("output", ""),
+    }
+    if _last_message_is_tool_result_user(messages):
+        content = messages[-1]["content"]
+        if isinstance(content, list):
+            content.append(tool_result)
+        return
+    messages.append({"role": "user", "content": [tool_result]})
+
+
+def _last_message_is_tool_call_assistant(messages: list[dict[str, Any]]) -> bool:
+    if not messages:
+        return False
+    message = messages[-1]
+    return _is_tool_call_assistant_message(message)
+
+
+def _last_message_is_tool_result_user(messages: list[dict[str, Any]]) -> bool:
+    if not messages:
+        return False
+    message = messages[-1]
+    if message.get("role") != "user":
+        return False
+    content = message.get("content")
+    return (
+        isinstance(content, list)
+        and bool(content)
+        and all(
+            isinstance(block, dict) and block.get("type") == "tool_result"
+            for block in content
         )
+    )
+
+
+def _is_tool_call_assistant_message(message: Mapping[str, Any]) -> bool:
+    if message.get("role") != "assistant":
+        return False
+    content = message.get("content")
+    return (
+        isinstance(content, list)
+        and bool(content)
+        and all(
+            isinstance(block, dict) and block.get("type") == "tool_use"
+            for block in content
+        )
+    )
+
+
+def _attach_reasoning_to_open_tool_call(
+    messages: list[dict[str, Any]], pending_reasoning: str
+) -> bool:
+    for message in reversed(messages):
+        if _is_tool_call_assistant_message(message):
+            _merge_reasoning_into_message(message, pending_reasoning)
+            return True
+        if not _is_tool_result_user_message(message):
+            return False
+    return False
+
+
+def _is_tool_result_user_message(message: Mapping[str, Any]) -> bool:
+    if message.get("role") != "user":
+        return False
+    content = message.get("content")
+    return (
+        isinstance(content, list)
+        and bool(content)
+        and all(
+            isinstance(block, dict) and block.get("type") == "tool_result"
+            for block in content
+        )
+    )
+
+
+def _merge_reasoning_into_message(
+    message: dict[str, Any], pending_reasoning: str
+) -> None:
+    message["reasoning_content"] = combine_reasoning(
+        message.get("reasoning_content")
+        if isinstance(message.get("reasoning_content"), str)
+        else None,
+        pending_reasoning,
+    )
 
 
 def _iter_input_items(value: Any) -> list[Any]:

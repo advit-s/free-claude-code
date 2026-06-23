@@ -671,6 +671,28 @@ def test_convert_assistant_text_after_tool_use_inserts_after_tool_results():
     assert result[2] == {"role": "assistant", "content": "Post-tool commentary"}
 
 
+def test_pending_tool_result_user_text_is_delayed_until_after_tool_messages():
+    messages = [
+        MockMessage(
+            "assistant",
+            [MockBlock(type="tool_use", id="call_z", name="Read", input={})],
+        ),
+        MockMessage(
+            "user",
+            [
+                MockBlock(type="text", text="Tool output follows:"),
+                MockBlock(type="tool_result", tool_use_id="call_z", content="file"),
+            ],
+        ),
+    ]
+
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert result[0]["role"] == "assistant" and "tool_calls" in result[0]
+    assert result[1] == {"role": "tool", "tool_call_id": "call_z", "content": "file"}
+    assert result[2] == {"role": "user", "content": "Tool output follows:"}
+
+
 def test_openai_build_accepts_declared_native_top_level_hints() -> None:
     """OpenAI conversion ignores known non-OpenAI hints (e.g. context_management) without 400."""
     req = MessagesRequest.model_validate(
